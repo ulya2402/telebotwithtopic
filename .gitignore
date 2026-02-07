@@ -1,0 +1,13 @@
+.env
+
+*.db
+*.sqlite
+
+.vscode/
+.idea/
+
+telechatbot
+telechatbot.exe
+
+__debug_bin
+testtest
