@@ -9,11 +9,48 @@ type Update struct {
 	UpdateID      int            `json:"update_id"`
 	Message       *Message       `json:"message"`
 	CallbackQuery *CallbackQuery `json:"callback_query"`
+	InlineQuery        *InlineQuery        `json:"inline_query"`          // Tambahan
+	ChosenInlineResult *ChosenInlineResult `json:"chosen_inline_result"`
+}
+
+type InlineQuery struct {
+	ID    string `json:"id"`
+	From  *User  `json:"from"`
+	Query string `json:"query"`
+}
+
+type ChosenInlineResult struct {
+	ResultID        string `json:"result_id"`
+	From            *User  `json:"from"`
+	Query           string `json:"query"`
+	InlineMessageID string `json:"inline_message_id"` // KUNCI UTAMA: ID pesan untuk diedit nanti
+}
+
+// Struct untuk menjawab Inline Query
+type AnswerInlineQueryRequest struct {
+	InlineQueryID string              `json:"inline_query_id"`
+	Results       []InlineQueryResult `json:"results"`
+	CacheTime     int                 `json:"cache_time"` // Cache agar tidak spam request
+}
+
+type InlineQueryResult struct {
+	Type                string               `json:"type"` // "article"
+	ID                  string               `json:"id"`
+	Title               string               `json:"title"`
+	Description         string               `json:"description,omitempty"`
+	InputMessageContent InputMessageContent  `json:"input_message_content"`
+	ReplyMarkup         *InlineKeyboardMarkup `json:"reply_markup,omitempty"` // Opsional
+}
+
+type InputMessageContent struct {
+	MessageText string `json:"message_text"`
+	ParseMode   string `json:"parse_mode,omitempty"`
 }
 
 type Message struct {
 	MessageID       int             `json:"message_id"`
 	MessageThreadID int             `json:"message_thread_id"`
+	InlineMessageID string               `json:"inline_message_id,omitempty"` // Tambahan untuk mode inline
 	From            *User           `json:"from"`
 	Chat            *Chat           `json:"chat"`
 	Text            string          `json:"text"`
@@ -51,11 +88,12 @@ type SendMessageRequest struct {
 }
 
 type EditMessageTextRequest struct {
-	ChatID      int64       `json:"chat_id"`
-	MessageID   int         `json:"message_id"`
+	ChatID          int64       `json:"chat_id,omitempty"`           // <--- WAJIB ADA omitempty
+	MessageID       int         `json:"message_id,omitempty"`        // <--- WAJIB ADA omitempty
+	InlineMessageID string      `json:"inline_message_id,omitempty"`
 	Text        string      `json:"text"`
 	ParseMode   string      `json:"parse_mode,omitempty"`
-	ReplyMarkup interface{} `json:"reply_markup,omitempty"`
+	ReplyMarkup     InlineKeyboardMarkup `json:"reply_markup,omitempty"` // Pastikan type ini sesuai struct Anda
 }
 
 type SendChatActionRequest struct {
@@ -87,4 +125,3 @@ type InlineKeyboardButton struct {
 	Text         string `json:"text"`
 	CallbackData string `json:"callback_data"`
 }
-

@@ -151,14 +151,46 @@ func (c *Client) AnswerCallbackQuery(callbackID string) {
 	c.HttpClient.Get(url)
 }
 
-func (c *Client) EditMessageText(chatID int64, messageID int, text string) error {
-	// Kita kirim ReplyMarkup kosong agar tombol close-nya hilang setelah diklik
+func (c *Client) AnswerInlineQuery(queryID string, results []models.InlineQueryResult) error {
+	reqBody := models.AnswerInlineQueryRequest{
+		InlineQueryID: queryID,
+		Results:       results,
+		CacheTime:     0, // Set 0 agar development mudah, naikkan ke 300 nanti
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/answerInlineQuery", c.BaseURL)
+	resp, err := c.HttpClient.Post(url, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Failed to answer inline query, status: %d", resp.StatusCode)
+		return fmt.Errorf("failed status: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// Update fungsi EditMessageText agar bisa pakai InlineMessageID
+func (c *Client) EditMessageText(chatID int64, messageID int, inlineMessageID string, text string) error {
+	// Logic: Jika inlineMessageID ada, chatID dan messageID akan otomatis diabaikan oleh JSON omitempty
 	reqBody := models.EditMessageTextRequest{
-		ChatID:      chatID,
-		MessageID:   messageID,
 		Text:        text,
 		ParseMode:   "Markdown",
-		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}, // Kosongkan tombol
+		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
+	}
+
+	if inlineMessageID != "" {
+		reqBody.InlineMessageID = inlineMessageID
+	} else {
+		reqBody.ChatID = chatID
+		reqBody.MessageID = messageID
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -173,9 +205,9 @@ func (c *Client) EditMessageText(chatID int64, messageID int, text string) error
 	}
 	defer resp.Body.Close()
 
+	// Abaikan error "message is not modified" atau error minor lainnya
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Failed to edit message, status: %d", resp.StatusCode)
-		return fmt.Errorf("failed to edit message, status: %d", resp.StatusCode)
+		return fmt.Errorf("status: %d", resp.StatusCode)
 	}
 
 	return nil

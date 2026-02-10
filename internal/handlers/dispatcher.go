@@ -38,6 +38,80 @@ func (d *Dispatcher) HandleUpdate(update models.Update) {
 		d.handleMessage(update.Message)
 	} else if update.CallbackQuery != nil {
 		d.handleCallback(update.CallbackQuery)
+	} else if update.InlineQuery != nil {
+		// [BARU] User sedang mengetik @bot ...
+		d.handleInlineQuery(update.InlineQuery)
+	} else if update.ChosenInlineResult != nil {
+		// [BARU] User SUDAH mengirim pesan inline
+		go d.handleChosenInlineResult(update.ChosenInlineResult)
+	}
+}
+
+func (d *Dispatcher) handleInlineQuery(iq *models.InlineQuery) {
+	if iq.Query == "" {
+		return
+	}
+
+	// [PERBAIKAN] Tambahkan tombol dummy agar Telegram men-generate inline_message_id
+	// Tanpa tombol ini, kita TIDAK BISA mengedit pesan tersebut nanti.
+	loadingKeyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: [][]models.InlineKeyboardButton{
+			{
+				{Text: "⏳ Waiting for AI...", CallbackData: "noop"},
+			},
+		},
+	}
+
+	article := models.InlineQueryResult{
+		Type:  "article",
+		ID:    iq.Query,
+		Title: "Tanya AI: " + iq.Query,
+		Description: "Klik untuk mengirim dan memproses jawaban",
+		InputMessageContent: models.InputMessageContent{
+			MessageText: fmt.Sprintf("⏳ *Sedang berpikir...*\n\nQuery: _%s_", iq.Query),
+			ParseMode:   "Markdown",
+		},
+		ReplyMarkup: loadingKeyboard, // <--- Masukkan keyboard di sini
+	}
+
+	d.Bot.AnswerInlineQuery(iq.ID, []models.InlineQueryResult{article})
+}
+
+// 2. Saat user KLIK hasil tersebut -> Pesan terkirim -> Bot dapat notif ini
+// Di sinilah kita panggil AI Groq dan EDIT pesan tadi.
+func (d *Dispatcher) handleChosenInlineResult(cir *models.ChosenInlineResult) {
+	log.Printf("Processing inline query: %s", cir.Query)
+
+	prompt := cir.Query
+	if prompt == "" {
+		prompt = cir.ResultID
+	}
+
+	messages := []models.GroqMessage{
+		{Role: "system", Content: d.SystemPrompt + "\n(Jawablah dengan ringkas, padat, dan to the point karena ini mode inline)"},
+		{Role: "user", Content: prompt},
+	}
+
+	// 1. Panggil AI
+	aiContent, _, err := d.AI.SendChat(messages) // Parameter ke-2 (reasoning) kita abaikan dengan "_"
+	
+	finalResponse := aiContent
+	if err != nil {
+		finalResponse = "⚠️ Gagal menghubungi AI."
+	}
+
+	// 2. BERSIHKAN THINKING
+	// Kita gunakan helper yang sudah ada di dispatcher.go untuk membuang tag <think>...</think>
+	// dan kita abaikan return value pertama (isi think-nya).
+	_, cleanResponse := d.extractThinkContent(finalResponse)
+
+	// 3. Format pesan akhir (Hanya Pertanyaan + Jawaban Bersih)
+	formattedText := fmt.Sprintf(cleanResponse)
+
+	// 4. Edit pesan
+	err = d.Bot.EditMessageText(0, 0, cir.InlineMessageID, formattedText)
+	if err != nil {
+		log.Printf("Failed to edit inline message: %v", err)
 	}
 }
 
@@ -266,9 +340,11 @@ func (d *Dispatcher) handleCallback(cb *models.CallbackQuery) {
 			username = cb.From.FirstName
 		}
 		
-		// Ganti pesan panjang dengan teks pendek
 		closedText := fmt.Sprintf("_Response closed by @%s_", username)
-		err := d.Bot.EditMessageText(chatID, msgID, closedText)
+		
+		// PERBAIKAN: Tambahkan string kosong "" sebagai parameter ke-3 (inlineMessageID)
+		err := d.Bot.EditMessageText(chatID, msgID, "", closedText) 
+		
 		if err != nil {
 			log.Printf("Error closing message: %v", err)
 		}
