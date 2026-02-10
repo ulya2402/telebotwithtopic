@@ -50,6 +50,14 @@ type SendMessageRequest struct {
 	ReplyMarkup     interface{} `json:"reply_markup,omitempty"`
 }
 
+type EditMessageTextRequest struct {
+	ChatID      int64       `json:"chat_id"`
+	MessageID   int         `json:"message_id"`
+	Text        string      `json:"text"`
+	ParseMode   string      `json:"parse_mode,omitempty"`
+	ReplyMarkup interface{} `json:"reply_markup,omitempty"`
+}
+
 type SendChatActionRequest struct {
 	ChatID          int64  `json:"chat_id"`
 	MessageThreadID int    `json:"message_thread_id,omitempty"`

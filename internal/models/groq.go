@@ -6,9 +6,12 @@ type GroqChatRequest struct {
 	Messages []GroqMessage `json:"messages"`
 }
 
+
+
 type GroqMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // Response structure

@@ -24,7 +24,7 @@ func NewGroqClient(apiKey, model string) *GroqClient {
 	}
 }
 
-func (g *GroqClient) SendChat(messages []models.GroqMessage) (string, error) {
+func (g *GroqClient) SendChat(messages []models.GroqMessage) (string, string, error) {
 	client := &http.Client{Timeout: 120 * time.Second}
 
 	reqBody := models.GroqChatRequest{
@@ -34,12 +34,12 @@ func (g *GroqClient) SendChat(messages []models.GroqMessage) (string, error) {
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	req, err := http.NewRequest("POST", groqURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -47,23 +47,23 @@ func (g *GroqClient) SendChat(messages []models.GroqMessage) (string, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := ioutil.ReadAll(resp.Body)
-		return "", fmt.Errorf("groq api error %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", "", fmt.Errorf("groq api error %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var groqResp models.GroqChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&groqResp); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	if len(groqResp.Choices) == 0 {
-		return "", fmt.Errorf("groq returned no choices")
+		return "", "", fmt.Errorf("groq returned no choices")
 	}
 
-	return groqResp.Choices[0].Message.Content, nil
+	return groqResp.Choices[0].Message.Content, groqResp.Choices[0].Message.Reasoning, nil
 }

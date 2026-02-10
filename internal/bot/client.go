@@ -150,3 +150,33 @@ func (c *Client) AnswerCallbackQuery(callbackID string) {
 	url := fmt.Sprintf("%s/answerCallbackQuery?callback_query_id=%s", c.BaseURL, callbackID)
 	c.HttpClient.Get(url)
 }
+
+func (c *Client) EditMessageText(chatID int64, messageID int, text string) error {
+	// Kita kirim ReplyMarkup kosong agar tombol close-nya hilang setelah diklik
+	reqBody := models.EditMessageTextRequest{
+		ChatID:      chatID,
+		MessageID:   messageID,
+		Text:        text,
+		ParseMode:   "Markdown",
+		ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}, // Kosongkan tombol
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("%s/editMessageText", c.BaseURL)
+	resp, err := c.HttpClient.Post(url, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Failed to edit message, status: %d", resp.StatusCode)
+		return fmt.Errorf("failed to edit message, status: %d", resp.StatusCode)
+	}
+
+	return nil
+}

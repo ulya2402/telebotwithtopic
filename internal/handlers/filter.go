@@ -15,6 +15,8 @@ func ShouldProcessMessage(msg *models.Message, botUsername string) (bool, string
 		return true, text
 	}
 
+	// [Pembaruan 1] Command dengan argumen (contoh: /ask pertanyaan)
+	// Ini tetap dibersihkan agar AI hanya menerima pertanyaannya
 	if strings.HasPrefix(text, "/ask") {
 		return true, cleanTrigger(text, "/ask")
 	}
@@ -22,23 +24,28 @@ func ShouldProcessMessage(msg *models.Message, botUsername string) (bool, string
 		return true, cleanTrigger(text, "/ai")
 	}
 
+	// [Pembaruan 2] Command TANPA argumen (Action Commands)
+	// Kita harus mengembalikan string command-nya agar tidak dianggap pesan kosong oleh dispatcher
+	if strings.HasPrefix(text, "/newchat") {
+		return true, "/newchat"
+	}
+	if strings.HasPrefix(text, "/lang") {
+		return true, "/lang"
+	}
+
 	// B. Check for Mention Trigger (@BotName)
-	// We handle cases like "@BotName hello" or "hello @BotName"
 	if botUsername != "" && strings.Contains(text, "@"+botUsername) {
-		// Clean the username from text so AI doesn't read it
 		cleaned := strings.ReplaceAll(text, "@"+botUsername, "")
 		return true, strings.TrimSpace(cleaned)
 	}
 
 	// C. Check for Reply Trigger
-	// If the user replies to a message sent by THIS bot
 	if msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil {
 		if msg.ReplyToMessage.From.Username == botUsername {
 			return true, text
 		}
 	}
 
-	// Default: Do not respond in groups if not triggered
 	return false, ""
 }
 

@@ -71,10 +71,9 @@ func (d *Dispatcher) continuouslySendTyping(chatID int64, threadID int, stopChan
 }
 
 func (d *Dispatcher) handleMessage(msg *models.Message) {
-	// Filter logic
 	shouldRespond, cleanText := ShouldProcessMessage(msg, d.BotUsername)
 	if !shouldRespond {
-		return 
+		return
 	}
 
 	text := cleanText
@@ -84,15 +83,30 @@ func (d *Dispatcher) handleMessage(msg *models.Message) {
 
 	userID := msg.From.ID
 	chatID := msg.Chat.ID
-	msgID := msg.MessageID // ID pesan user untuk di-reply
+	msgID := msg.MessageID
 	threadID := 0
-	
+
 	if msg.IsTopicMessage || msg.MessageThreadID != 0 {
 		threadID = msg.MessageThreadID
 	}
 
 	userLang := d.DB.GetUserLanguage(userID)
-	
+
+	if strings.HasPrefix(text, "/newchat") {
+		err := d.DB.ClearHistory(chatID, threadID)
+		if err != nil {
+			log.Printf("Failed to clear history: %v", err)
+			d.Bot.SendMessage(chatID, threadID, msgID, "Failed to reset chat context.", nil)
+			return
+		}
+		resetText := "🧹 Chat context has been reset. I have forgotten our previous conversation in this topic."
+		if userLang == "id" {
+			resetText = "🧹 Konteks obrolan telah direset. Aku sudah melupakan percakapan kita sebelumnya di topik ini."
+		}
+		d.Bot.SendMessage(chatID, threadID, msgID, resetText, nil)
+		return
+	}
+
 	if strings.HasPrefix(text, "/start") {
 		welcomeText := d.Localizer.Get(userLang, "welcome")
 		d.Bot.SendMessage(chatID, threadID, 0, welcomeText, nil)
@@ -109,23 +123,29 @@ func (d *Dispatcher) handleMessage(msg *models.Message) {
 	typingStop := make(chan bool)
 	go d.continuouslySendTyping(chatID, threadID, typingStop)
 
+	searchInstruction := " \n\nIMPORTANT: If you search the web, ALWAYS provide citations/sources as Markdown hyperlinks like this: [Title](URL). Do not use bare URLs or [1] format."
+	finalSystemPrompt := d.SystemPrompt + searchInstruction
 
 	var messages []models.GroqMessage
-	messages = append(messages, models.GroqMessage{Role: "system", Content: d.SystemPrompt})
+	messages = append(messages, models.GroqMessage{Role: "system", Content: finalSystemPrompt})
 
 	for _, h := range history {
 		role := "user"
 		if h.Role == "AI" {
 			role = "assistant"
 		}
-		messages = append(messages, models.GroqMessage{Role: role, Content: h.Content})
+		// [Pembaruan 1] Filter pesan kosong.
+		// Jika ada history kosong/spasi doang di database, JANGAN kirim ke AI.
+		// Ini mencegah AI bingung dan mengulang pesan lama.
+		if strings.TrimSpace(h.Content) != "" {
+			messages = append(messages, models.GroqMessage{Role: role, Content: h.Content})
+		}
 	}
 
 	messages = append(messages, models.GroqMessage{Role: "user", Content: text})
 
-	
-	aiRawResponse, err := d.AI.SendChat(messages)
-	
+	aiContent, aiReasoning, err := d.AI.SendChat(messages)
+
 	typingStop <- true
 	close(typingStop)
 
@@ -135,16 +155,23 @@ func (d *Dispatcher) handleMessage(msg *models.Message) {
 		return
 	}
 
-	thinkContent, cleanResponse := d.extractThinkContent(aiRawResponse)
-	safeResponse := strings.ReplaceAll(cleanResponse, "**", "*")
+	extractedThink, cleanBody := d.extractThinkContent(aiContent)
 
-	if thinkContent != "" {
+	finalThink := aiReasoning
+	if finalThink == "" {
+		finalThink = extractedThink
+	}
+
+	finalResponse := cleanBody
+	safeResponse := strings.ReplaceAll(finalResponse, "**", "*")
+
+	if finalThink != "" && msg.Chat.Type != "private" {
 		draftID := fmt.Sprintf("%d", time.Now().UnixNano())
-		thoughtDisplay := fmt.Sprintf("🧠 %s...", thinkContent)
-		
+		thoughtDisplay := fmt.Sprintf("🧠 %s...", finalThink)
+
 		d.Bot.SendMessageDraft(chatID, threadID, msgID, draftID, thoughtDisplay)
-		
-		delay := time.Duration(len(thinkContent)/50) * time.Second
+
+		delay := time.Duration(len(finalThink)/50) * time.Second
 		if delay < 1*time.Second {
 			delay = 1 * time.Second
 		}
@@ -154,17 +181,41 @@ func (d *Dispatcher) handleMessage(msg *models.Message) {
 		time.Sleep(delay)
 	}
 
-	err = d.Bot.SendMessage(chatID, threadID, msgID, safeResponse, nil)
-	if err != nil {
-		log.Printf("Markdown send failed, trying raw: %v", err)
-		d.Bot.SendMessage(chatID, threadID, msgID, cleanResponse, nil)
+	var replyMarkup interface{}
+	if msg.Chat.Type != "private" {
+		replyMarkup = models.InlineKeyboardMarkup{
+			InlineKeyboard: [][]models.InlineKeyboardButton{
+				{
+					{Text: "Close ❌", CallbackData: "close_msg"},
+				},
+			},
+		}
 	}
 
-	d.DB.AddHistory(chatID, threadID, "User", text)
-	d.DB.AddHistory(chatID, threadID, "AI", cleanResponse)
+	err = d.Bot.SendMessage(chatID, threadID, msgID, safeResponse, replyMarkup)
+	if err != nil {
+		log.Printf("Markdown send failed, trying raw: %v", err)
+		d.Bot.SendMessage(chatID, threadID, msgID, finalResponse, replyMarkup)
+	}
+
+	if strings.TrimSpace(text) != "" {
+		errUser := d.DB.AddHistory(chatID, threadID, "User", text)
+		if errUser != nil {
+			log.Printf("[ERROR] Failed to save User message to DB: %v", errUser)
+		}
+	}
+
+	if strings.TrimSpace(finalResponse) != "" {
+		errAI := d.DB.AddHistory(chatID, threadID, "AI", finalResponse)
+		if errAI != nil {
+			log.Printf("[ERROR] Failed to save AI response to DB: %v", errAI)
+		} else {
+			log.Printf("[DEBUG] Saved AI response to DB.")
+		}
+	}
 
 	if isNewTopic && threadID != 0 && msg.Chat.Type == "private" {
-		go d.generateAndSetTopicTitle(chatID, threadID, cleanResponse)
+		go d.generateAndSetTopicTitle(chatID, threadID, finalResponse)
 	}
 }
 
@@ -172,15 +223,15 @@ func (d *Dispatcher) generateAndSetTopicTitle(chatID int64, threadID int, contex
 	if len(contextText) > 500 {
 		contextText = contextText[:500]
 	}
-	
+
 	prompt := fmt.Sprintf("Buatkan judul topik maksimal 3 kata, sangat ringkas, tanpa simbol, tanpa tanda baca, berdasarkan teks ini: %s", contextText)
-	
+
 	msgs := []models.GroqMessage{
 		{Role: "system", Content: d.SystemPrompt},
 		{Role: "user", Content: prompt},
 	}
 
-	title, err := d.AI.SendChat(msgs)
+	title, _, err := d.AI.SendChat(msgs)
 	if err != nil {
 		log.Printf("Failed to generate title: %v", err)
 		return
@@ -190,7 +241,7 @@ func (d *Dispatcher) generateAndSetTopicTitle(chatID int64, threadID int, contex
 	cleanTitle = strings.ReplaceAll(cleanTitle, "*", "")
 	cleanTitle = strings.ReplaceAll(cleanTitle, "\"", "")
 	cleanTitle = strings.ReplaceAll(cleanTitle, ".", "")
-	
+
 	words := strings.Fields(cleanTitle)
 	if len(words) > 3 {
 		cleanTitle = strings.Join(words[:3], " ")
@@ -205,7 +256,24 @@ func (d *Dispatcher) handleCallback(cb *models.CallbackQuery) {
 	chatID := cb.Message.Chat.ID
 	threadID := cb.Message.MessageThreadID 
 
+	msgID := cb.Message.MessageID
+
 	d.Bot.AnswerCallbackQuery(cb.ID)
+
+	if cb.Data == "close_msg" {
+		username := cb.From.Username
+		if username == "" {
+			username = cb.From.FirstName
+		}
+		
+		// Ganti pesan panjang dengan teks pendek
+		closedText := fmt.Sprintf("_Response closed by @%s_", username)
+		err := d.Bot.EditMessageText(chatID, msgID, closedText)
+		if err != nil {
+			log.Printf("Error closing message: %v", err)
+		}
+		return
+	}
 
 	if strings.HasPrefix(cb.Data, "set_lang_") {
 		newLang := strings.TrimPrefix(cb.Data, "set_lang_")

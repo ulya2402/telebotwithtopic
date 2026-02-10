@@ -111,3 +111,9 @@ func (db *DB) GetHistory(chatID int64, threadID int) ([]ChatMessage, error) {
 	}
 	return history, nil
 }
+
+func (db *DB) ClearHistory(chatID int64, threadID int) error {
+	query := `DELETE FROM chat_history WHERE chat_id = ? AND thread_id = ?`
+	_, err := db.Conn.Exec(query, chatID, threadID)
+	return err
+}
