@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strings" // [Pembaruan] Import strings untuk memecah API Key
 	"telechatbot/config"
 	"telechatbot/internal/api"
 	"telechatbot/internal/bot"
@@ -22,7 +23,15 @@ func main() {
 
 	botClient := bot.NewClient(cfg.TelegramToken)
 
-	aiClient := api.NewGroqClient(cfg.GroqApiKey, cfg.GroqModel)
+	// [Pembaruan] Logika Rotasi API Key
+	// Kita memecah string dari .env (contoh: "key1,key2,key3") menjadi array/slice
+	apiKeys := strings.Split(cfg.GroqApiKey, ",")
+	for i := range apiKeys {
+		apiKeys[i] = strings.TrimSpace(apiKeys[i]) // Hapus spasi jika ada
+	}
+
+	// Masukkan array apiKeys ke client, bukan cuma satu string
+	aiClient := api.NewGroqClient(apiKeys, cfg.GroqModel)
 
 	// Update: Pass cfg.BotUsername to the dispatcher
 	d := handlers.NewDispatcher(botClient, aiClient, db, loc, cfg.SystemPrompt, cfg.BotUsername)
@@ -41,7 +50,7 @@ func main() {
 			if update.UpdateID >= offset {
 				offset = update.UpdateID + 1
 			}
-			
+
 			go d.HandleUpdate(update)
 		}
 	}
